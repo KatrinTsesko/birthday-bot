@@ -304,32 +304,25 @@ class BirthdayBot:
         )
 
     async def force_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Принудительная проверка через DeepSeek"""
-        birthdays_today = self.get_today_birthdays()
-    
-        if not birthdays_today:
-            await update.message.reply_text("📅 Сегодня никто не празднует")
-            return
-    
+        """Принудительная проверка (100% как реальная, но с меткой 'Тест')"""
+        # Оборачиваем send_birthday_greetings в try, чтобы добавить метку
         try:
-            if len(birthdays_today) == 1:
-                name = birthdays_today[0]
-                greeting = await self.generate_greeting(name)
-                message = f"🎉 Тест: {greeting}"
-            else:
-                # Генерируем единое поздравление для всех
-                message = await self.generate_multi_birthday_greeting(birthdays_today)
-                message = f"🎉 Тест: {message}"
-        
-            await update.message.reply_text(message)
-        
+            # Создаём временный "подконтекст" с подменой chat_id
+            fake_context = CallbackContext.from_update(update, context.application)
+            fake_context._chat_id = update.message.chat_id  # перенаправляем в чат, где вызвали /check
+
+            # Сначала пишем, что это тест
+            await update.message.reply_text("🔍 Тестовая проверка поздравлений...\n")
+
+            # Запускаем реальную функцию
+            await self.send_birthday_greetings(fake_context)
+
+            # Завершаем сообщением
+            await update.message.reply_text("✅ Тест завершён (результат выше).")
+
         except Exception as e:
-            # Запасной вариант
-            message = f"🎉 Тест: сегодня празднуют {len(birthdays_today)} человека!\n\n"
-            for name in birthdays_today:
-                greeting = await self.generate_greeting(name)
-                message += f"🎂 {greeting}\n\n"
-            await update.message.reply_text(message)
+            await update.message.reply_text(f"❌ Ошибка теста: {e}")
+
 
     async def get_chat_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда для получения ID чата"""
