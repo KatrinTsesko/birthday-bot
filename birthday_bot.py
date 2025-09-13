@@ -281,7 +281,7 @@ class BirthdayBot:
         if job_queue:
             job_queue.run_daily(
                 self.send_birthday_greetings,
-                time=time(hour=23, minute=40, tzinfo=ZoneInfo(self.timezone)),
+                time=time(hour=8, minute=10, tzinfo=ZoneInfo(self.timezone)),
                 name="daily_birthday_check"
             )
             print(f"⏰ Планировщик настроен на 09:00 ({self.timezone})")
