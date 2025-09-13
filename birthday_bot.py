@@ -211,14 +211,27 @@ class BirthdayBot:
         return [name for name, date in self.birthdays.items() if date == today]
 
     async def send_birthday_greetings(self, context: CallbackContext):
-        """Отправка поздравлений"""
-        birthdays_today = self.get_today_birthdays()
+        """Отправка поздравлений с учетом выходных дней"""
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        today_str = today.strftime("%d.%m")
+    
+        # Проверяем является ли сегодня рабочим днем
+        is_weekend = today.weekday() >= 5  # 5=суббота, 6=воскресенье
+    
+        birthdays_today = [name for name, date in self.birthdays.items() if date == today_str]
         
         if not birthdays_today:
             print("📅 Сегодня никто не празднует")
             return
         
         print(f"🎂 Найдены именинники: {birthdays_today}")
+
+        # Если сегодня выходной - отправляем особое сообщение
+        if is_weekend:
+            weekend_message = await self.generate_weekend_greeting(birthdays_today, today)
+            await context.bot.send_message(chat_id=self.chat_id, text=weekend_message)
+            print(f"✅ Отправлено поздравление для выходного дня")
+            return
         
         if len(birthdays_today) == 1:
             # Один именинник
@@ -237,6 +250,58 @@ class BirthdayBot:
             message += "🎉 От всего коллектива желаем счастья и улыбок! 🥳"
             await context.bot.send_message(chat_id=self.chat_id, text=message)
             print(f"✅ Отправлено объединенное поздравление")
+
+    async def generate_multi_birthday_greeting(self, birthdays):
+        """Генерация поздравления для нескольких именинников через DeepSeek"""
+        try:
+            if not self.deepseek_api_key:
+                return self.generate_fallback_multi_greeting(birthdays)
+        
+            url = "https://api.deepseek.com/v1/chat/completions"
+            headers = {
+            "Authorization": f"Bearer {self.deepseek_api_key}", 
+            "Content-Type": "application/json"
+            }
+        
+            names_list = ", ".join(birthdays)
+            first_names = [name.split()[0] for name in birthdays]
+        
+            data = {
+                "model": "deepseek-chat",
+                "messages": [
+                    {
+                        "role": "system", 
+                        "content": "Ты профессиональный копирайтер. Пиши теплые поздравления с днем рождения для нескольких коллег. Сделай поздравление единым текстом, а не списком."
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Напиши общее поздравление с днем рождения для коллег: {names_list}. Сделай текст единым и теплым, от имени компании."
+                    }
+                ],
+                "max_tokens": 200,
+                "temperature": 0.8
+            }
+        
+            response = requests.post(url, headers=headers, json=data, timeout=10)
+            response.raise_for_status()
+            result = response.json()
+        
+            greeting = result['choices'][0]['message']['content'].strip()
+            return f"🎉 {greeting}"
+        
+        except Exception as e:
+            print(f"Ошибка DeepSeek для нескольких именинников: {e}")
+            return self.generate_fallback_multi_greeting(birthdays)
+
+    def generate_fallback_multi_greeting(self, birthdays):
+        """Запасной вариант для нескольких именинников"""
+        names_list = ", ".join(birthdays)
+        return (
+            f"🎉 Сегодня {len(birthdays)} именинника! 🎊\n\n"
+            f"Поздравляем наших коллег {names_list} с днем рождения! "
+            f"От всей компании желаем счастья, здоровья, профессиональных успехов и ярких достижений! "
+            f"Пусть каждый день приносит радость и удовлетворение от работы! 🥳"
+        )
 
     async def force_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Принудительная проверка"""
