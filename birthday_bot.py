@@ -304,17 +304,33 @@ class BirthdayBot:
         )
 
     async def force_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Принудительная проверка"""
+        """Принудительная проверка через DeepSeek"""
         birthdays_today = self.get_today_birthdays()
+    
+        if not birthdays_today:
+            await update.message.reply_text("📅 Сегодня никто не празднует")
+            return
+    
+        try:
+            if len(birthdays_today) == 1:
+                name = birthdays_today[0]
+                greeting = await self.generate_greeting(name)
+                message = f"🎉 Тест: {greeting}"
+            else:
+                # Генерируем единое поздравление для всех
+                message = await self.generate_multi_birthday_greeting(birthdays_today)
+                message = f"🎉 Тест: {message}"
         
-        if birthdays_today:
-            response = f"🎉 Тест: сегодня празднуют {len(birthdays_today)} человек!\n\n"
+            await update.message.reply_text(message)
+        
+        except Exception as e:
+            # Запасной вариант
+            message = f"🎉 Тест: сегодня празднуют {len(birthdays_today)} человека!\n\n"
             for name in birthdays_today:
                 greeting = await self.generate_greeting(name)
-                response += f"{greeting}\n\n"
-            await update.message.reply_text(response)
-        else:
-            await update.message.reply_text("📅 Сегодня никто не празднует")
+                message += f"🎂 {greeting}\n\n"
+            await update.message.reply_text(message)
+
     async def get_chat_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда для получения ID чата"""
         chat_id = update.message.chat_id
