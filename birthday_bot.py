@@ -3,8 +3,7 @@ import json
 import logging
 import csv
 import requests
-import calendar
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -12,9 +11,9 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    CallbackContext
 )
 from zoneinfo import ZoneInfo
+import asyncio
 
 # -------------------- НАСТРОЙКА -------------------- #
 load_dotenv()
@@ -91,9 +90,6 @@ class BirthdayBot:
 
         handler = cmd_map.get(query.data)
         if handler:
-            # Вызов функции без аргументов команды
-            # Для add нужно будет писать через /add вручную
-            # Можно доработать чтобы открывалась инструкция
             if query.data == 'add':
                 await query.edit_message_text("Используйте: /add Имя день.месяц\nПример: /add Иван 15.05")
             else:
@@ -178,7 +174,7 @@ class BirthdayBot:
         except Exception:
             return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
 
-    async def send_birthday_greetings(self, context: CallbackContext):
+    async def send_birthday_greetings(self, context: ContextTypes.DEFAULT_TYPE):
         today = datetime.now(tz=ZoneInfo(self.timezone)).strftime("%d.%m")
         birthdays_today = {name: date for name, date in self.birthdays.items() if date == today}
         messages = []
@@ -229,16 +225,19 @@ if __name__ == "__main__":
         name="daily_birthday_check"
     )
 
-    # Webhook Railway
+    # -------------------- WEBHOOK -------------------- #
     url = os.getenv("RAILWAY_URL")
     if not url:
         raise ValueError("Не задан RAILWAY_URL")
-    application.bot.set_webhook(f"{url}/webhook/{bot.token}")
+
+    async def setup_webhook():
+        await application.bot.set_webhook(f"{url}/webhook/{bot.token}")
+
+    asyncio.run(setup_webhook())
 
     application.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
         webhook_url=f"{url}/webhook/{bot.token}"
-        #webhook_url=f"{url}/webhook/{bot.token}"
     )
