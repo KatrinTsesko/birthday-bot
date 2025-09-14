@@ -25,7 +25,7 @@ logging.basicConfig(
 
 HOLIDAYS = {"01.01", "23.02", "08.03", "01.05", "09.05", "12.06", "04.11"}
 
-
+# -------------------- КЛАСС БОТА -------------------- #
 class BirthdayBot:
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
@@ -152,7 +152,7 @@ class BirthdayBot:
         except ValueError:
             return False
 
-    # -------------------- Генерация поздравлений -------------------- #
+    # -------------------- Поздравления -------------------- #
     async def generate_greeting(self, full_name):
         first_name = full_name.split()[0]
         if not self.deepseek_api_key:
@@ -204,7 +204,7 @@ class BirthdayBot:
         self.save_birthdays()
         await update.message.reply_text("💾 Файлы синхронизированы")
 
-    # -------------------- РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ -------------------- #
+    # -------------------- РЕГИСТРАЦИЯ -------------------- #
     def register_handlers(self):
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("add", self.add_birthday))
@@ -218,33 +218,36 @@ class BirthdayBot:
     def get_application(self):
         return self.application
 
-
 # -------------------- ЗАПУСК -------------------- #
 async def main():
     bot = BirthdayBot()
     app = bot.get_application()
 
-    # Планировщик 09:00
+    # Планировщик
     app.job_queue.run_daily(
         bot.send_birthday_greetings,
         time=time(hour=9, minute=0, tzinfo=ZoneInfo(bot.timezone)),
         name="daily_birthday_check"
     )
 
-    # Webhook Railway
+    # Webhook
     url = os.getenv("RAILWAY_URL")
     if not url:
         raise ValueError("RAILWAY_URL не задан")
-    
-    await app.bot.set_webhook(f"{url}/webhook/{bot.token}")
-    await app.run_webhook(
+
+    await app.initialize()
+    await app.start_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
         webhook_url=f"{url}/webhook/{bot.token}"
     )
+    print("🎂 BirthdayBot запущен!")
 
-# Запуск, учитывая, что loop может уже существовать
+    # Чтобы не завершался
+    await asyncio.Event().wait()
+
+# -------------------- Запуск через уже существующий loop -------------------- #
 try:
     loop = asyncio.get_running_loop()
     loop.create_task(main())
