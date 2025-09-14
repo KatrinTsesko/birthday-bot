@@ -11,6 +11,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    JobQueue
 )
 from zoneinfo import ZoneInfo
 import asyncio
@@ -60,7 +61,6 @@ class BirthdayBot:
 
     # -------------------- КОМАНДЫ -------------------- #
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Приветствие с кнопками"""
         keyboard = [
             [InlineKeyboardButton("➕ Добавить", callback_data='add')],
             [InlineKeyboardButton("📋 Список", callback_data='list')],
@@ -74,7 +74,6 @@ class BirthdayBot:
         await update.message.reply_text("🎂 Company Birthday Bot\nВыберите команду ниже:", reply_markup=reply_markup)
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Обработка нажатий кнопок"""
         query = update.callback_query
         await query.answer()
 
@@ -197,12 +196,13 @@ class BirthdayBot:
         self.save_birthdays()
         await update.message.reply_text("💾 Файлы синхронизированы")
 
-# -------------------- ЗАПУСК ЧЕРЕЗ WEBHOOK -------------------- #
-if __name__ == "__main__":
+
+# -------------------- ASYNC MAIN -------------------- #
+async def main():
     bot = BirthdayBot()
     application = Application.builder().token(bot.token).build()
 
-    # Регистрация команд
+    # Команды
     handlers = [
         CommandHandler("start", bot.start),
         CommandHandler("add", bot.add_birthday),
@@ -212,32 +212,33 @@ if __name__ == "__main__":
         CommandHandler("check", bot.force_check),
         CommandHandler("sync", bot.sync_files)
     ]
-    for handler in handlers:
-        application.add_handler(handler)
+    for h in handlers:
+        application.add_handler(h)
 
-    # Обработка кнопок
+    # Кнопки
     application.add_handler(CallbackQueryHandler(bot.button_handler))
 
-    # Планировщик 09:00
+    # JobQueue
     application.job_queue.run_daily(
         bot.send_birthday_greetings,
         time=time(hour=9, minute=0, tzinfo=ZoneInfo(bot.timezone)),
         name="daily_birthday_check"
     )
 
-    # -------------------- WEBHOOK -------------------- #
+    # Webhook
     url = os.getenv("RAILWAY_URL")
     if not url:
         raise ValueError("Не задан RAILWAY_URL")
 
-    async def setup_webhook():
-        await application.bot.set_webhook(f"{url}/webhook/{bot.token}")
+    await application.bot.set_webhook(f"{url}/webhook/{bot.token}")
 
-    asyncio.run(setup_webhook())
-
-    application.run_webhook(
+    # Запуск webhook
+    await application.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
         webhook_url=f"{url}/webhook/{bot.token}"
     )
+
+if __name__ == "__main__":
+    asyncio.run(main())
