@@ -431,4 +431,6 @@ class BirthdayBot:
 
 if __name__ == "__main__":
     bot = BirthdayBot()
+    #bot.run()
     bot.run()
+
