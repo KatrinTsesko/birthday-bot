@@ -240,4 +240,5 @@ if __name__ == "__main__":
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
         webhook_url=f"{url}/webhook/{bot.token}"
+        #webhook_url=f"{url}/webhook/{bot.token}"
     )
