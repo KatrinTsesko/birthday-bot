@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext
 from zoneinfo import ZoneInfo
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackQueryHandler
 
 # -------------------- НАСТРОЙКА -------------------- #
 load_dotenv()
@@ -59,23 +61,37 @@ class BirthdayBot:
         except Exception as e:
             print(f"Ошибка синхронизации CSV: {e}")
 
-    # -------------------- КОМАНДЫ -------------------- #
+    # -------------------- КНОПКИ -------------------- #
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Приветственное сообщение"""
-        commands = [
-            "/add имя день.месяц - добавить день рождения",
-            "/list - показать все дни рождения",
-            "/import - импорт из CSV файла",
-            "/getid - получить ID чата",
-            "/check - принудительная проверка (тест)",
-            "/sync - синхронизация файлов",
-            "/help - помощь"
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить день рождения", callback_data="add")],
+            [InlineKeyboardButton("📋 Показать все дни рождения", callback_data="list")],
+            [InlineKeyboardButton("📥 Импорт из CSV", callback_data="import")],
+            [InlineKeyboardButton("🆔 Получить ID чата", callback_data="getid")],
+            [InlineKeyboardButton("🔍 Принудительная проверка", callback_data="check")],
+            [InlineKeyboardButton("💾 Синхронизация файлов", callback_data="sync")],
+            [InlineKeyboardButton("❓ Помощь", callback_data="help")]
         ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text("🎂 Company Birthday Bot\n\nВыберите действие:", reply_markup=reply_markup)
 
-        await update.message.reply_text(
-            "🎂 Company Birthday Bot\n\n" +
-            "Команды:\n" + "\n".join(f"• {cmd}" for cmd in commands)
-        )
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        query = update.callback_query
+        await query.answer()
+        if query.data == "add":
+            await query.message.reply_text("Введите команду: /add Имя день.месяц")
+        elif query.data == "list":
+            await self.list_birthdays(update, context)
+        elif query.data == "import":
+            await self.import_birthdays(update, context)
+        elif query.data == "getid":
+            await self.get_chat_id(update, context)
+        elif query.data == "check":
+            await self.force_check(update, context)
+        elif query.data == "sync":
+            await self.sync_files(update, context)
+        elif query.data == "help":
+            await self.start(update, context)
 
     async def add_birthday(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Добавление дня рождения"""
@@ -392,7 +408,8 @@ class BirthdayBot:
             CommandHandler("getid", self.get_chat_id),
             CommandHandler("check", self.force_check),
             CommandHandler("sync", self.sync_files),
-            CommandHandler("help", self.start)
+            CommandHandler("help", self.start),
+            CallbackQueryHandler(self.button_handler)
         ]
 
         for handler in handlers:
