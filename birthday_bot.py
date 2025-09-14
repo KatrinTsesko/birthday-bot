@@ -1,19 +1,13 @@
 import os
 import json
-import logging
 import csv
+import logging
 import requests
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
-from zoneinfo import ZoneInfo
-import asyncio
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # -------------------- НАСТРОЙКА -------------------- #
 load_dotenv()
@@ -25,7 +19,6 @@ logging.basicConfig(
 
 HOLIDAYS = {"01.01", "23.02", "08.03", "01.05", "09.05", "12.06", "04.11"}
 
-# -------------------- КЛАСС БОТА -------------------- #
 class BirthdayBot:
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
@@ -35,7 +28,6 @@ class BirthdayBot:
         self.birthdays_file = 'birthdays.json'
         self.load_birthdays()
 
-        # Создаем Application один раз
         self.application = Application.builder().token(self.token).build()
         self.register_handlers()
 
@@ -82,7 +74,6 @@ class BirthdayBot:
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
         await query.answer()
-
         cmd_map = {
             'add': self.add_birthday,
             'list': self.list_birthdays,
@@ -92,7 +83,6 @@ class BirthdayBot:
             'sync': self.sync_files,
             'help': self.start
         }
-
         handler = cmd_map.get(query.data)
         if handler:
             if query.data == 'add':
@@ -152,17 +142,14 @@ class BirthdayBot:
         except ValueError:
             return False
 
-    # -------------------- Поздравления -------------------- #
+    # -------------------- ПОЗДРАВЛЕНИЯ -------------------- #
     async def generate_greeting(self, full_name):
         first_name = full_name.split()[0]
         if not self.deepseek_api_key:
             return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
         try:
             url = "https://api.deepseek.com/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.deepseek_api_key}",
-                "Content-Type": "application/json"
-            }
+            headers = {"Authorization": f"Bearer {self.deepseek_api_key}", "Content-Type": "application/json"}
             data = {
                 "model": "deepseek-chat",
                 "messages": [
@@ -204,7 +191,7 @@ class BirthdayBot:
         self.save_birthdays()
         await update.message.reply_text("💾 Файлы синхронизированы")
 
-    # -------------------- РЕГИСТРАЦИЯ -------------------- #
+    # -------------------- ОБРАБОТЧИКИ -------------------- #
     def register_handlers(self):
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("add", self.add_birthday))
@@ -215,41 +202,29 @@ class BirthdayBot:
         self.application.add_handler(CommandHandler("sync", self.sync_files))
         self.application.add_handler(CallbackQueryHandler(self.button_handler))
 
-    def get_application(self):
-        return self.application
-
 # -------------------- ЗАПУСК -------------------- #
-async def main():
+if __name__ == "__main__":
     bot = BirthdayBot()
-    app = bot.get_application()
+    app = bot.application
 
-    # Планировщик
+    # Планировщик: 09:00 каждый день
     app.job_queue.run_daily(
         bot.send_birthday_greetings,
         time=time(hour=9, minute=0, tzinfo=ZoneInfo(bot.timezone)),
         name="daily_birthday_check"
     )
 
-    # Webhook
-    url = os.getenv("RAILWAY_URL")
-    if not url:
+    RAILWAY_URL = os.getenv("RAILWAY_URL")
+    if not RAILWAY_URL:
         raise ValueError("RAILWAY_URL не задан")
 
-    await app.initialize()
-    await app.start_webhook(
+    # Установка webhook
+    app.bot.set_webhook(f"{RAILWAY_URL}/webhook/{bot.token}")
+
+    # Запуск webhook
+    app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
-        webhook_url=f"{url}/webhook/{bot.token}"
+        webhook_url=f"{RAILWAY_URL}/webhook/{bot.token}"
     )
-    print("🎂 BirthdayBot запущен!")
-
-    # Чтобы не завершался
-    await asyncio.Event().wait()
-
-# -------------------- Запуск через уже существующий loop -------------------- #
-try:
-    loop = asyncio.get_running_loop()
-    loop.create_task(main())
-except RuntimeError:
-    asyncio.run(main())
