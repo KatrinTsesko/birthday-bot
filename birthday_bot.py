@@ -11,7 +11,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    JobQueue
 )
 from zoneinfo import ZoneInfo
 import asyncio
@@ -26,6 +25,7 @@ logging.basicConfig(
 
 HOLIDAYS = {"01.01", "23.02", "08.03", "01.05", "09.05", "12.06", "04.11"}
 
+
 class BirthdayBot:
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
@@ -34,6 +34,10 @@ class BirthdayBot:
         self.timezone = os.getenv('TZ', 'Europe/Moscow')
         self.birthdays_file = 'birthdays.json'
         self.load_birthdays()
+
+        # Создаем Application один раз
+        self.application = Application.builder().token(self.token).build()
+        self.register_handlers()
 
     # -------------------- ФАЙЛЫ -------------------- #
     def load_birthdays(self):
@@ -71,7 +75,9 @@ class BirthdayBot:
             [InlineKeyboardButton("❓ Помощь", callback_data='help')]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("🎂 Company Birthday Bot\nВыберите команду ниже:", reply_markup=reply_markup)
+        await update.message.reply_text(
+            "🎂 Company Birthday Bot\nВыберите команду ниже:", reply_markup=reply_markup
+        )
 
     async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         query = update.callback_query
@@ -90,7 +96,9 @@ class BirthdayBot:
         handler = cmd_map.get(query.data)
         if handler:
             if query.data == 'add':
-                await query.edit_message_text("Используйте: /add Имя день.месяц\nПример: /add Иван 15.05")
+                await query.edit_message_text(
+                    "Используйте: /add Имя день.месяц\nПример: /add Иван 15.05"
+                )
             else:
                 await handler(update, context)
         else:
@@ -196,49 +204,49 @@ class BirthdayBot:
         self.save_birthdays()
         await update.message.reply_text("💾 Файлы синхронизированы")
 
+    # -------------------- РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ -------------------- #
+    def register_handlers(self):
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("add", self.add_birthday))
+        self.application.add_handler(CommandHandler("list", self.list_birthdays))
+        self.application.add_handler(CommandHandler("import", self.import_birthdays))
+        self.application.add_handler(CommandHandler("getid", self.get_chat_id))
+        self.application.add_handler(CommandHandler("check", self.force_check))
+        self.application.add_handler(CommandHandler("sync", self.sync_files))
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
 
-# -------------------- ASYNC MAIN -------------------- #
+    def get_application(self):
+        return self.application
+
+
+# -------------------- ЗАПУСК -------------------- #
 async def main():
     bot = BirthdayBot()
-    application = Application.builder().token(bot.token).build()
+    app = bot.get_application()
 
-    # Команды
-    handlers = [
-        CommandHandler("start", bot.start),
-        CommandHandler("add", bot.add_birthday),
-        CommandHandler("list", bot.list_birthdays),
-        CommandHandler("import", bot.import_birthdays),
-        CommandHandler("getid", bot.get_chat_id),
-        CommandHandler("check", bot.force_check),
-        CommandHandler("sync", bot.sync_files)
-    ]
-    for h in handlers:
-        application.add_handler(h)
-
-    # Кнопки
-    application.add_handler(CallbackQueryHandler(bot.button_handler))
-
-    # JobQueue
-    application.job_queue.run_daily(
+    # Планировщик 09:00
+    app.job_queue.run_daily(
         bot.send_birthday_greetings,
         time=time(hour=9, minute=0, tzinfo=ZoneInfo(bot.timezone)),
         name="daily_birthday_check"
     )
 
-    # Webhook
+    # Webhook Railway
     url = os.getenv("RAILWAY_URL")
     if not url:
-        raise ValueError("Не задан RAILWAY_URL")
-
-    await application.bot.set_webhook(f"{url}/webhook/{bot.token}")
-
-    # Запуск webhook
-    await application.run_webhook(
+        raise ValueError("RAILWAY_URL не задан")
+    
+    await app.bot.set_webhook(f"{url}/webhook/{bot.token}")
+    await app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=f"webhook/{bot.token}",
         webhook_url=f"{url}/webhook/{bot.token}"
     )
 
-if __name__ == "__main__":
+# Запуск, учитывая, что loop может уже существовать
+try:
+    loop = asyncio.get_running_loop()
+    loop.create_task(main())
+except RuntimeError:
     asyncio.run(main())
