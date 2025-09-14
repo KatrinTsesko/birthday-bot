@@ -3,7 +3,8 @@ import json
 import logging
 import csv
 import requests
-from datetime import datetime, time
+import calendar
+from datetime import datetime, time, timedelta
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, CallbackContext
@@ -17,6 +18,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+# Базовый список праздников (можно вынести в файл и редактировать)
+HOLIDAYS = {"01.01", "23.02", "08.03", "01.05", "09.05", "12.06", "04.11"}
+
+
 class BirthdayBot:
     def __init__(self):
         self.token = os.getenv('BOT_TOKEN')
@@ -26,7 +31,7 @@ class BirthdayBot:
         self.birthdays_file = 'birthdays.json'
         self.load_birthdays()
 
-    # -------------------- РАБОТА С ФАЙЛАМИ -------------------- #
+    # -------------------- ФАЙЛЫ -------------------- #
     def load_birthdays(self):
         """Загрузка дней рождения из JSON файла"""
         try:
@@ -37,11 +42,10 @@ class BirthdayBot:
             self.save_birthdays()
 
     def save_birthdays(self):
-        """Сохранение дней рождения в JSON и автоматическая синхронизация с CSV"""
+        """Сохранение дней рождения в JSON и синхронизация с CSV"""
         with open(self.birthdays_file, 'w', encoding='utf-8') as f:
             json.dump(self.birthdays, f, ensure_ascii=False, indent=2)
-        
-        # Автоматическая синхронизация с CSV
+        # Синхронизируем CSV автоматически
         self.sync_to_csv()
 
     def sync_to_csv(self):
@@ -55,21 +59,21 @@ class BirthdayBot:
         except Exception as e:
             print(f"Ошибка синхронизации CSV: {e}")
 
-    # -------------------- КОМАНДЫ БОТА -------------------- #
+    # -------------------- КОМАНДЫ -------------------- #
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Приветственное сообщение"""
         commands = [
             "/add имя день.месяц - добавить день рождения",
-            "/list - показать все дни рождения", 
+            "/list - показать все дни рождения",
             "/import - импорт из CSV файла",
             "/getid - получить ID чата",
-            "/check - принудительная проверка",
+            "/check - принудительная проверка (тест)",
             "/sync - синхронизация файлов",
             "/help - помощь"
         ]
-        
+
         await update.message.reply_text(
-            "🎂 Бот-поздравлятор\n\n" +
+            "🎂 Company Birthday Bot\n\n" +
             "Команды:\n" + "\n".join(f"• {cmd}" for cmd in commands)
         )
 
@@ -82,7 +86,7 @@ class BirthdayBot:
         try:
             name = ' '.join(context.args[:-1]).strip()
             date_str = context.args[-1].strip()
-            
+
             if not name:
                 await update.message.reply_text("Имя не может быть пустым!")
                 return
@@ -96,7 +100,7 @@ class BirthdayBot:
             # Сохранение
             self.birthdays[name] = f"{day:02d}.{month:02d}"
             self.save_birthdays()
-            
+
             await update.message.reply_text(f"✅ {name} добавлен(а): {day:02d}.{month:02d}")
 
         except ValueError:
@@ -106,14 +110,14 @@ class BirthdayBot:
         """Импорт дней рождения из CSV файла"""
         try:
             imported_count = 0
-            
+
             with open('import_birthdays.csv', 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 for row in reader:
                     if all(key in row for key in ['Имя', 'Дата']):
                         name = row['Имя'].strip()
                         date_str = row['Дата'].strip()
-                        
+
                         if name and date_str and self._validate_date(date_str):
                             self.birthdays[name] = date_str
                             imported_count += 1
@@ -140,11 +144,11 @@ class BirthdayBot:
         if not self.birthdays:
             await update.message.reply_text("📭 Список дней рождения пуст")
             return
-        
+
         response = "📅 Дни рождения:\n\n"
         for name, date in sorted(self.birthdays.items(), key=lambda x: x[1]):
             response += f"• {name}: {date}\n"
-        
+
         await update.message.reply_text(response)
 
     async def sync_files(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -156,27 +160,32 @@ class BirthdayBot:
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка синхронизации: {e}")
 
+    # -------------------- ГЕНЕРАЦИЯ ПОЗДРАВЛЕНИЙ -------------------- #
     async def generate_greeting(self, full_name):
-        """Генерация поздравления через DeepSeek API"""
+        """Генерация поздравления через DeepSeek API (fallback — шаблон)"""
         first_name = full_name.split()[0]  # Извлекаем только имя
-    
+
         try:
             if not self.deepseek_api_key:
                 # Fallback на шаблонное поздравление если нет API ключа
-                return f"🎉 Дорогой {first_name}, от всей души поздравляем с днем рождения! 🎂"
-        
+                return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
+
             url = "https://api.deepseek.com/v1/chat/completions"
             headers = {
-                "Authorization": f"Bearer {self.deepseek_api_key}", 
+                "Authorization": f"Bearer {self.deepseek_api_key}",
                 "Content-Type": "application/json"
             }
-        
+
             data = {
                 "model": "deepseek-chat",
                 "messages": [
                     {
-                        "role": "system", 
-                        "content": "Ты профессиональный копирайтер, который пишет теплые и искренние поздравления с днем рождения коллегам. Поздравления должны быть краткими (1-2 предложения), дружескими и профессиональными. Пиши УНИКАЛЬНЫЕ поздравления для каждого человека. Избегай шаблонных фраз. Учитывай что в один день может быть несколько именинников.Пиши от имени компании. ОБЯЗАТЕЛЬНО используй имя человека в начале поздравления."
+                        "role": "system",
+                        "content": (
+                            "Ты профессиональный копирайтер, который пишет теплые и искренние поздравления с днем рождения коллегам. "
+                            "Поздравления должны быть краткими (1-2 предложения), дружескими и профессиональными. Пиши УНИКАЛЬНЫЕ поздравления для каждого человека. "
+                            "Избегай шаблонных фраз. Пиши от имени компании. ОБЯЗАТЕЛЬНО используй имя человека в начале поздравления."
+                        )
                     },
                     {
                         "role": "user",
@@ -186,91 +195,42 @@ class BirthdayBot:
                 "max_tokens": 100,
                 "temperature": 0.9
             }
-        
+
             response = requests.post(url, headers=headers, json=data, timeout=10)
             response.raise_for_status()
             result = response.json()
-        
+
             greeting = result['choices'][0]['message']['content'].strip()
-        
+
             # Гарантируем что имя есть в поздравлении
             if first_name.lower() not in greeting.lower():
                 greeting = f"{first_name}, {greeting}"
-            
+
             return greeting
-        
+
         except Exception as e:
             print(f"Ошибка DeepSeek: {e}")
             # Fallback если API недоступно
-            return f"🎉 Дорогой {first_name}, от всей души поздравляем с днем рождения! 🎂"
-   
-    # -------------------- ПРОВЕРКА И ОТПРАВКА -------------------- #
-    def get_today_birthdays(self):
-        """Получение списка именинников на сегодня"""
-        today = datetime.now(tz=ZoneInfo(self.timezone)).strftime("%d.%m")
-        return [name for name, date in self.birthdays.items() if date == today]
-
-    async def send_birthday_greetings(self, context: CallbackContext):
-        """Отправка поздравлений с учетом выходных дней"""
-        today = datetime.now(tz=ZoneInfo(self.timezone))
-        today_str = today.strftime("%d.%m")
-    
-        # Проверяем является ли сегодня рабочим днем
-        is_weekend = today.weekday() >= 5  # 5=суббота, 6=воскресенье
-    
-        birthdays_today = [name for name, date in self.birthdays.items() if date == today_str]
-        
-        if not birthdays_today:
-            print("📅 Сегодня никто не празднует")
-            return
-        
-        print(f"🎂 Найдены именинники: {birthdays_today}")
-
-        # Если сегодня выходной - отправляем особое сообщение
-        if is_weekend:
-            weekend_message = await self.generate_weekend_greeting(birthdays_today, today)
-            await context.bot.send_message(chat_id=self.chat_id, text=weekend_message)
-            print(f"✅ Отправлено поздравление для выходного дня")
-            return
-        
-        if len(birthdays_today) == 1:
-            # Один именинник
-            name = birthdays_today[0]
-            greeting = await self.generate_greeting(name)
-            await context.bot.send_message(chat_id=self.chat_id, text=f"🎉 {greeting}")
-            print(f"✅ Отправлено поздравление для {name}")
-            
-        else:
-            # Несколько именинников
-            message = f"🎉 Сегодня {len(birthdays_today)} именинника! 🎊\n\n"
-            for name in birthdays_today:
-                greeting = await self.generate_greeting(name)
-                message += f"🎂 {greeting}\n\n"
-            
-            message += "🎉 От всего коллектива желаем счастья и улыбок! 🥳"
-            await context.bot.send_message(chat_id=self.chat_id, text=message)
-            print(f"✅ Отправлено объединенное поздравление")
+            return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
 
     async def generate_multi_birthday_greeting(self, birthdays):
-        """Генерация поздравления для нескольких именинников через DeepSeek"""
+        """Генерация поздравления для нескольких именинников через DeepSeek (или fallback)"""
         try:
             if not self.deepseek_api_key:
                 return self.generate_fallback_multi_greeting(birthdays)
-        
+
             url = "https://api.deepseek.com/v1/chat/completions"
             headers = {
-            "Authorization": f"Bearer {self.deepseek_api_key}", 
-            "Content-Type": "application/json"
+                "Authorization": f"Bearer {self.deepseek_api_key}",
+                "Content-Type": "application/json"
             }
-        
+
             names_list = ", ".join(birthdays)
-            first_names = [name.split()[0] for name in birthdays]
-        
             data = {
                 "model": "deepseek-chat",
                 "messages": [
                     {
-                        "role": "system", 
+                        "role": "system",
                         "content": "Ты профессиональный копирайтер. Пиши теплые поздравления с днем рождения для нескольких коллег. Сделай поздравление единым текстом, а не списком."
                     },
                     {
@@ -281,14 +241,15 @@ class BirthdayBot:
                 "max_tokens": 200,
                 "temperature": 0.8
             }
-        
+
             response = requests.post(url, headers=headers, json=data, timeout=10)
             response.raise_for_status()
             result = response.json()
-        
+
             greeting = result['choices'][0]['message']['content'].strip()
+            # Возвращаем уже с emoji, т.к. это единый текст
             return f"🎉 {greeting}"
-        
+
         except Exception as e:
             print(f"Ошибка DeepSeek для нескольких именинников: {e}")
             return self.generate_fallback_multi_greeting(birthdays)
@@ -302,57 +263,114 @@ class BirthdayBot:
             f"От всей компании желаем счастья, здоровья, профессиональных успехов и ярких достижений! "
             f"Пусть каждый день приносит радость и удовлетворение от работы! 🥳"
         )
-    
-    async def generate_weekend_greeting(self, birthdays, today):
-        """
-        Поздравление для выходного дня.
-        birthdays: list[str] — список полных имён, у которых сегодня праздник.
-        today: datetime — объект текущей даты/времени (передаётся из send_birthday_greetings).
-        """
-        try:
-            # Один именинник — используем стандартную генерацию, но помечаем, что это выходной
-            if len(birthdays) == 1:
-                name = birthdays[0]
-                greeting = await self.generate_greeting(name)  # уже возвращает строку с именем
-                return f"🎉 (Выходной) {greeting}"
 
-            # Несколько именинников — используем общий генератор
-            multi_greeting = await self.generate_multi_birthday_greeting(birthdays)
-            # Если генератор уже добавил emoji/префикс, не дублируем его
-            if multi_greeting.startswith("🎉") or multi_greeting.startswith("📣"):
-                return multi_greeting
-            return f"🎉 (Выходной) {multi_greeting}"
+    # -------------------- ВСПОМОГАТЕЛЬНЫЕ ДЛЯ ВЫХОДНЫХ/ПРАЗДНИКОВ -------------------- #
+    def get_weekend_birthdays(self):
+        """Возвращает ДР за прошедшие выходные (если сегодня понедельник)."""
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        if today.weekday() == 0:  # понедельник
+            saturday = (today - timedelta(days=2)).strftime("%d.%m")
+            sunday = (today - timedelta(days=1)).strftime("%d.%m")
+            return {name: date for name, date in self.birthdays.items() if date in [saturday, sunday]}
+        return {}
 
-        except Exception as e:
-            print(f"Ошибка generate_weekend_greeting: {e}")
-            # Запасной вариант: простое сообщение для выходного дня
-            if len(birthdays) == 1:
-                first = birthdays[0].split()[0]
-                return f"🎉 (Выходной) Дорогой {first}, поздравляем с днём рождения! Пусть выходной будет тёплым и радостным 🎂"
-            else:
-                return self.generate_fallback_multi_greeting(birthdays)
-    
+    def get_holiday_birthdays(self):
+        """Возвращает ДР за вчера, если вчера был праздник."""
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        yesterday = (today - timedelta(days=1)).strftime("%d.%m")
+        if yesterday in HOLIDAYS:
+            return {name: date for name, date in self.birthdays.items() if date == yesterday}
+        return {}
+
+    # -------------------- ОТПРАВКА ПОЗДРАВЛЕНИЙ -------------------- #
+    async def send_birthday_greetings(self, context: CallbackContext, target_chat_id: str = None, test: bool = False):
+        """
+        Основной метод отправки поздравлений.
+        - target_chat_id: если указан, отправка пойдёт в этот чат (используется /check).
+        - test: если True, добавляется префикс "ТЕСТ" и отправка идёт в target_chat_id.
+        """
+        chat_id = target_chat_id or self.chat_id
+        today = datetime.now(tz=ZoneInfo(self.timezone))
+        today_str = today.strftime("%d.%m")
+
+        birthdays_today = {name: date for name, date in self.birthdays.items() if date == today_str}
+        weekend_birthdays = self.get_weekend_birthdays()
+        holiday_birthdays = self.get_holiday_birthdays()
+
+        all_birthdays = {
+            "Сегодня": birthdays_today,
+            "В выходные": weekend_birthdays,
+            "В праздник": holiday_birthdays
+        }
+
+        messages = []
+        for label, bdays in all_birthdays.items():
+            if not bdays:
+                continue
+
+            if label == "Сегодня":
+                if len(bdays) == 1:
+                    name = next(iter(bdays))
+                    greeting = await self.generate_greeting(name)
+                    messages.append(greeting if greeting.startswith("🎉") else f"🎉 {greeting}")
+                else:
+                    multi_greeting = await self.generate_multi_birthday_greeting(list(bdays.keys()))
+                    messages.append(multi_greeting)
+
+            elif label == "В выходные":
+                # Формат: "В субботу у Марии был день рождения!\n[поздравление]"
+                for name, date in bdays.items():
+                    # определяем день недели по дате (год неважен, ставим ближайший високосный/не - берем 2025)
+                    try:
+                        weekday_idx = datetime.strptime(date + ".2025", "%d.%m.%Y").weekday()
+                        weekday_name_en = calendar.day_name[weekday_idx]
+                        weekday_ru = {"Saturday": "в субботу", "Sunday": "в воскресенье"}.get(weekday_name_en, "в выходные")
+                    except Exception:
+                        weekday_ru = "в выходные"
+
+                    greeting = await self.generate_greeting(name)
+                    greeting_text = greeting if greeting.startswith("🎉") else f"🎉 {greeting}"
+                    messages.append(f"🎉 {weekday_ru.capitalize()} у {name} был день рождения!\n{greeting_text}")
+
+            elif label == "В праздник":
+                # Формат: "В праздничный день (dd.mm) у Марии был день рождения!\n[поздравление]"
+                for name, date in bdays.items():
+                    greeting = await self.generate_greeting(name)
+                    greeting_text = greeting if greeting.startswith("🎉") else f"🎉 {greeting}"
+                    messages.append(f"🎉 В праздничный день ({date}) у {name} был день рождения!\n{greeting_text}")
+
+        if messages:
+            full_message = "\n\n".join(messages)
+            if test:
+                full_message = "🎯 ТЕСТОВАЯ ПРОВЕРКА:\n\n" + full_message
+            await context.bot.send_message(chat_id=chat_id, text=full_message)
+            print("✅ Отправлены поздравления:", messages)
+        else:
+            print("📅 Сегодня и в ближайшие дни нет именинников")
 
     async def force_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Принудительная проверка (100% как реальная, но с меткой 'Тест')"""
-        # Оборачиваем send_birthday_greetings в try, чтобы добавить метку
+        """
+        Принудительная проверка (вызывает боевую send_birthday_greetings).
+        Результат отправляется в чат, где вызвали команду, и помечается как тест.
+        """
+        # Проверяем, есть ли вообще именинники (локально)
+        birthdays_today = self.get_today_birthdays()
+        if not birthdays_today:
+            await update.message.reply_text("📅 Сегодня никто не празднует")
+            return
+
         try:
-            # Создаём временный "подконтекст" с подменой chat_id
-            fake_context = CallbackContext.from_update(update, context.application)
-            fake_context._chat_id = update.message.chat_id  # перенаправляем в чат, где вызвали /check
-
-            # Сначала пишем, что это тест
-            await update.message.reply_text("🔍 Тестовая проверка поздравлений...\n")
-
-            # Запускаем реальную функцию
-            await self.send_birthday_greetings(fake_context)
-
-            # Завершаем сообщением
+            # Выполняем боевую функцию, но отправляем результат в чат, где вызвали команду
+            await update.message.reply_text("🔍 Тестовая проверка поздравлений...")
+            await self.send_birthday_greetings(context, target_chat_id=update.message.chat_id, test=True)
             await update.message.reply_text("✅ Тест завершён (результат выше).")
-
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка теста: {e}")
 
+    def get_today_birthdays(self):
+        """Получение списка именинников на сегодня (только имена в виде списка)"""
+        today = datetime.now(tz=ZoneInfo(self.timezone)).strftime("%d.%m")
+        return [name for name, date in self.birthdays.items() if date == today]
 
     async def get_chat_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Команда для получения ID чата"""
@@ -376,22 +394,23 @@ class BirthdayBot:
             CommandHandler("sync", self.sync_files),
             CommandHandler("help", self.start)
         ]
-        
+
         for handler in handlers:
             application.add_handler(handler)
 
-        # Настройка планировщика
+        # Настройка планировщика (ежедневно в 09:00 по TZ)
         job_queue = application.job_queue
         if job_queue:
             job_queue.run_daily(
                 self.send_birthday_greetings,
-                time=time(hour=8, minute=10, tzinfo=ZoneInfo(self.timezone)),
+                time=time(hour=9, minute=0, tzinfo=ZoneInfo(self.timezone)),
                 name="daily_birthday_check"
             )
             print(f"⏰ Планировщик настроен на 09:00 ({self.timezone})")
 
         print("🚀 Бот запущен...")
         application.run_polling()
+
 
 if __name__ == "__main__":
     bot = BirthdayBot()
