@@ -1,22 +1,16 @@
 import os
 import json
-import logging
 import csv
+import logging
 import requests
 from datetime import datetime, time
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
-from zoneinfo import ZoneInfo
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 # -------------------- НАСТРОЙКА -------------------- #
 load_dotenv()
-
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -24,224 +18,208 @@ logging.basicConfig(
 
 HOLIDAYS = {"01.01", "23.02", "08.03", "01.05", "09.05", "12.06", "04.11"}
 
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+TZ = os.getenv("TZ", "Europe/Moscow")
+RAILWAY_URL = os.getenv("RAILWAY_URL")
+PORT = int(os.environ.get("PORT", 8443))
 
-class BirthdayBot:
-    def __init__(self):
-        self.token = os.getenv('BOT_TOKEN')
-        self.chat_id = os.getenv('CHAT_ID')
-        self.deepseek_api_key = os.getenv('DEEPSEEK_API_KEY')
-        self.timezone = os.getenv('TZ', 'Europe/Moscow')
-        self.birthdays_file = 'birthdays.json'
-        self.load_birthdays()
+BIRTHDAYS_FILE = "birthdays.json"
 
-        # Создаем Application один раз
-        self.application = Application.builder().token(self.token).build()
-        self.register_handlers()
 
-    # -------------------- ФАЙЛЫ -------------------- #
-    def load_birthdays(self):
-        try:
-            with open(self.birthdays_file, 'r', encoding='utf-8') as f:
-                self.birthdays = json.load(f)
-        except FileNotFoundError:
-            self.birthdays = {}
-            self.save_birthdays()
+# -------------------- ФУНКЦИИ -------------------- #
+def load_birthdays():
+    try:
+        with open(BIRTHDAYS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
-    def save_birthdays(self):
-        with open(self.birthdays_file, 'w', encoding='utf-8') as f:
-            json.dump(self.birthdays, f, ensure_ascii=False, indent=2)
-        self.sync_to_csv()
+def save_birthdays(birthdays):
+    with open(BIRTHDAYS_FILE, "w", encoding="utf-8") as f:
+        json.dump(birthdays, f, ensure_ascii=False, indent=2)
+    sync_to_csv(birthdays)
 
-    def sync_to_csv(self):
-        try:
-            with open('import_birthdays.csv', 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=['Имя', 'Дата'])
-                writer.writeheader()
-                for name, date in self.birthdays.items():
-                    writer.writerow({'Имя': name, 'Дата': date})
-        except Exception as e:
-            print(f"Ошибка синхронизации CSV: {e}")
+def sync_to_csv(birthdays):
+    try:
+        with open("import_birthdays.csv", "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["Имя", "Дата"])
+            writer.writeheader()
+            for name, date in birthdays.items():
+                writer.writerow({"Имя": name, "Дата": date})
+    except Exception as e:
+        print(f"Ошибка синхронизации CSV: {e}")
 
-    # -------------------- КОМАНДЫ -------------------- #
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        keyboard = [
-            [InlineKeyboardButton("➕ Добавить", callback_data='add')],
-            [InlineKeyboardButton("📋 Список", callback_data='list')],
-            [InlineKeyboardButton("📥 Импорт CSV", callback_data='import')],
-            [InlineKeyboardButton("🆔 Получить ID", callback_data='getid')],
-            [InlineKeyboardButton("🔍 Проверка", callback_data='check')],
-            [InlineKeyboardButton("💾 Синхронизация", callback_data='sync')],
-            [InlineKeyboardButton("❓ Помощь", callback_data='help')]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text(
-            "🎂 Company Birthday Bot\nВыберите команду ниже:", reply_markup=reply_markup
-        )
 
-    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        query = update.callback_query
-        await query.answer()
+# -------------------- ОБРАБОТЧИКИ -------------------- #
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить", callback_data='add')],
+        [InlineKeyboardButton("📋 Список", callback_data='list')],
+        [InlineKeyboardButton("📥 Импорт CSV", callback_data='import')],
+        [InlineKeyboardButton("🆔 Получить ID", callback_data='getid')],
+        [InlineKeyboardButton("🔍 Проверка", callback_data='check')],
+        [InlineKeyboardButton("💾 Синхронизация", callback_data='sync')],
+        [InlineKeyboardButton("❓ Помощь", callback_data='help')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("🎂 Company Birthday Bot\nВыберите команду ниже:", reply_markup=reply_markup)
 
-        cmd_map = {
-            'add': self.add_birthday,
-            'list': self.list_birthdays,
-            'import': self.import_birthdays,
-            'getid': self.get_chat_id,
-            'check': self.force_check,
-            'sync': self.sync_files,
-            'help': self.start
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    birthdays = context.bot_data.get("birthdays", {})
+    cmd_map = {
+        'add': lambda u, c: query.edit_message_text("Используйте: /add Имя день.месяц\nПример: /add Иван 15.05"),
+        'list': list_birthdays,
+        'import': import_birthdays,
+        'getid': get_chat_id,
+        'check': force_check,
+        'sync': sync_files,
+        'help': start
+    }
+    handler = cmd_map.get(query.data)
+    if handler:
+        await handler(update, context)
+    else:
+        await query.edit_message_text("Неизвестная команда!")
+
+async def add_birthday(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    birthdays = context.bot_data.get("birthdays", {})
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("Используйте: /add Имя день.месяц\nПример: /add Иван 15.05")
+        return
+    try:
+        name = ' '.join(context.args[:-1]).strip()
+        date_str = context.args[-1].strip()
+        day, month = map(int, date_str.split('.'))
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+            await update.message.reply_text("Неверная дата!")
+            return
+        birthdays[name] = f"{day:02d}.{month:02d}"
+        save_birthdays(birthdays)
+        context.bot_data["birthdays"] = birthdays
+        await update.message.reply_text(f"✅ {name} добавлен(а): {day:02d}.{month:02d}")
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат!")
+
+async def list_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    birthdays = context.bot_data.get("birthdays", {})
+    if not birthdays:
+        await update.message.reply_text("📭 Список пуст")
+        return
+    response = "📅 Дни рождения:\n"
+    for name, date in sorted(birthdays.items(), key=lambda x: x[1]):
+        response += f"• {name}: {date}\n"
+    await update.message.reply_text(response)
+
+async def import_birthdays(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    birthdays = context.bot_data.get("birthdays", {})
+    try:
+        imported_count = 0
+        with open('import_birthdays.csv', 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                name, date_str = row['Имя'].strip(), row['Дата'].strip()
+                if name and _validate_date(date_str):
+                    birthdays[name] = date_str
+                    imported_count += 1
+        save_birthdays(birthdays)
+        context.bot_data["birthdays"] = birthdays
+        await update.message.reply_text(f"✅ Импортировано: {imported_count}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+def _validate_date(date_str):
+    try:
+        day, month = map(int, date_str.split('.'))
+        return 1 <= day <= 31 and 1 <= month <= 12
+    except ValueError:
+        return False
+
+async def get_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"ID чата: {update.message.chat_id}")
+
+async def force_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_birthday_greetings(context)
+    await update.message.reply_text("✅ Проверка выполнена")
+
+async def sync_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    birthdays = context.bot_data.get("birthdays", {})
+    save_birthdays(birthdays)
+    await update.message.reply_text("💾 Файлы синхронизированы")
+
+async def generate_greeting(full_name):
+    first_name = full_name.split()[0]
+    if not DEEPSEEK_API_KEY:
+        return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
+    try:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
         }
+        data = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "Ты пишешь теплые поздравления для коллег."},
+                {"role": "user", "content": f"Поздравление для {first_name}"}
+            ],
+            "max_tokens": 100,
+            "temperature": 0.9
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        response.raise_for_status()
+        greeting = response.json()['choices'][0]['message']['content'].strip()
+        if first_name.lower() not in greeting.lower():
+            greeting = f"{first_name}, {greeting}"
+        return greeting
+    except Exception:
+        return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
 
-        handler = cmd_map.get(query.data)
-        if handler:
-            if query.data == 'add':
-                await query.edit_message_text(
-                    "Используйте: /add Имя день.месяц\nПример: /add Иван 15.05"
-                )
-            else:
-                await handler(update, context)
-        else:
-            await query.edit_message_text("Неизвестная команда!")
-
-    async def add_birthday(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not context.args or len(context.args) < 2:
-            await update.message.reply_text("Используйте: /add Имя день.месяц\nПример: /add Иван 15.05")
-            return
-        try:
-            name = ' '.join(context.args[:-1]).strip()
-            date_str = context.args[-1].strip()
-            day, month = map(int, date_str.split('.'))
-            if not (1 <= day <= 31 and 1 <= month <= 12):
-                await update.message.reply_text("Неверная дата!")
-                return
-            self.birthdays[name] = f"{day:02d}.{month:02d}"
-            self.save_birthdays()
-            await update.message.reply_text(f"✅ {name} добавлен(а): {day:02d}.{month:02d}")
-        except ValueError:
-            await update.message.reply_text("❌ Неверный формат!")
-
-    async def list_birthdays(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self.birthdays:
-            await update.message.reply_text("📭 Список пуст")
-            return
-        response = "📅 Дни рождения:\n"
-        for name, date in sorted(self.birthdays.items(), key=lambda x: x[1]):
-            response += f"• {name}: {date}\n"
-        await update.message.reply_text(response)
-
-    async def import_birthdays(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            imported_count = 0
-            with open('import_birthdays.csv', 'r', encoding='utf-8') as f:
-                reader = csv.DictReader(f)
-                for row in reader:
-                    name, date_str = row['Имя'].strip(), row['Дата'].strip()
-                    if name and self._validate_date(date_str):
-                        self.birthdays[name] = date_str
-                        imported_count += 1
-            self.save_birthdays()
-            await update.message.reply_text(f"✅ Импортировано: {imported_count}")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка: {e}")
-
-    def _validate_date(self, date_str):
-        try:
-            day, month = map(int, date_str.split('.'))
-            return 1 <= day <= 31 and 1 <= month <= 12
-        except ValueError:
-            return False
-
-    # -------------------- Генерация поздравлений -------------------- #
-    async def generate_greeting(self, full_name):
-        first_name = full_name.split()[0]
-        if not self.deepseek_api_key:
-            return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
-        try:
-            url = "https://api.deepseek.com/v1/chat/completions"
-            headers = {
-                "Authorization": f"Bearer {self.deepseek_api_key}",
-                "Content-Type": "application/json"
-            }
-            data = {
-                "model": "deepseek-chat",
-                "messages": [
-                    {"role": "system", "content": "Ты пишешь теплые поздравления для коллег."},
-                    {"role": "user", "content": f"Поздравление для {first_name}"}
-                ],
-                "max_tokens": 100,
-                "temperature": 0.9
-            }
-            response = requests.post(url, headers=headers, json=data, timeout=10)
-            response.raise_for_status()
-            greeting = response.json()['choices'][0]['message']['content'].strip()
-            if first_name.lower() not in greeting.lower():
-                greeting = f"{first_name}, {greeting}"
-            return greeting
-        except Exception:
-            return f"🎉 {first_name}, от всей души поздравляем с днем рождения! 🎂"
-
-    async def send_birthday_greetings(self, context: ContextTypes.DEFAULT_TYPE):
-        today = datetime.now(tz=ZoneInfo(self.timezone)).strftime("%d.%m")
-        birthdays_today = {name: date for name, date in self.birthdays.items() if date == today}
-        messages = []
-        for name in birthdays_today:
-            greeting = await self.generate_greeting(name)
+async def send_birthday_greetings(context: ContextTypes.DEFAULT_TYPE):
+    birthdays = context.bot_data.get("birthdays", {})
+    today = datetime.now(tz=ZoneInfo(TZ)).strftime("%d.%m")
+    messages = []
+    for name, date in birthdays.items():
+        if date == today:
+            greeting = await generate_greeting(name)
             messages.append(greeting)
-        if messages:
-            await context.bot.send_message(chat_id=self.chat_id, text="\n\n".join(messages))
-            print("✅ Отправлены поздравления:", messages)
+    if messages:
+        await context.bot.send_message(chat_id=CHAT_ID, text="\n\n".join(messages))
+        print("✅ Отправлены поздравления:", messages)
 
-    async def get_chat_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        chat_id = update.message.chat_id
-        await update.message.reply_text(f"ID чата: {chat_id}")
 
-    async def force_check(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        await self.send_birthday_greetings(context)
-        await update.message.reply_text("✅ Проверка выполнена")
-
-    async def sync_files(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.save_birthdays()
-        await update.message.reply_text("💾 Файлы синхронизированы")
-
-    # -------------------- РЕГИСТРАЦИЯ ОБРАБОТЧИКОВ -------------------- #
-    def register_handlers(self):
-        self.application.add_handler(CommandHandler("start", self.start))
-        self.application.add_handler(CommandHandler("add", self.add_birthday))
-        self.application.add_handler(CommandHandler("list", self.list_birthdays))
-        self.application.add_handler(CommandHandler("import", self.import_birthdays))
-        self.application.add_handler(CommandHandler("getid", self.get_chat_id))
-        self.application.add_handler(CommandHandler("check", self.force_check))
-        self.application.add_handler(CommandHandler("sync", self.sync_files))
-        self.application.add_handler(CallbackQueryHandler(self.button_handler))
-
-    def get_application(self):
-        return self.application
+# -------------------- APPLICATION -------------------- #
+def build_application():
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.bot_data["birthdays"] = load_birthdays()
+    # Handlers
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add_birthday))
+    app.add_handler(CommandHandler("list", list_birthdays))
+    app.add_handler(CommandHandler("import", import_birthdays))
+    app.add_handler(CommandHandler("getid", get_chat_id))
+    app.add_handler(CommandHandler("check", force_check))
+    app.add_handler(CommandHandler("sync", sync_files))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    # APScheduler
+    app.job_queue.run_daily(
+        send_birthday_greetings,
+        time=time(hour=9, minute=0, tzinfo=ZoneInfo(TZ)),
+        name="daily_birthday_check"
+    )
+    return app
 
 
 # -------------------- ЗАПУСК -------------------- #
-def main():
-    bot = BirthdayBot()
-    app = bot.get_application()
-
-    # Планировщик 09:00
-    app.job_queue.run_daily(
-        bot.send_birthday_greetings,
-        time=time(hour=9, minute=0, tzinfo=ZoneInfo(bot.timezone)),
-        name="daily_birthday_check"
-    )
-
-    RAILWAY_URL = os.getenv("RAILWAY_URL")
-    if not RAILWAY_URL:
-        raise ValueError("RAILWAY_URL не задан")
-
-    # Запуск webhook (только синхронный вызов!)
+if __name__ == "__main__":
+    app = build_application()
+    # Устанавливаем webhook и запускаем сервер
     app.run_webhook(
         listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8443)),
-        url_path=f"webhook/{bot.token}",
-        webhook_url=f"{RAILWAY_URL}/webhook/{bot.token}",
+        port=PORT,
+        url_path=f"webhook/{BOT_TOKEN}",
+        webhook_url=f"{RAILWAY_URL}/webhook/{BOT_TOKEN}"
     )
-
-
-if __name__ == "__main__":
-    main()
